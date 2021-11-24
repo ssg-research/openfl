@@ -270,7 +270,39 @@ def run_experiment(collaborator_dict: dict, override_config: dict = None):
     logger.info('Starting Experiment...')
 
     aggregator = plan.get_aggregator()
+    ################################################################################################################
+    watermark_enabled = plan.config['watermark']['watermark_enabled']
+    classes = 10
+    if watermark_enabled:
+        wm_transform = torchvision.transforms.Compose([
+            torchvision.transforms.Grayscale(),
+            torchvision.transforms.Resize(28),
+            torchvision.transforms.CenterCrop(28),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(0.5, 0.5)
+        ])
+        watermark_data_path = '/Users/guoyujia/Documents/summer_job/myopenfl/openfl-tutorials/WATERMARK/'
+        watermark_set = Pattern(watermark_data_path, train=False, transform=wm_transform)
+        watermark_images, watermark_labels = watermark_set.train_data, np.array(watermark_set.train_labels)
+        y_valid_wartermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
+        watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_wartermark,
+                                          batch_size=32,
+                                          num_classes=classes)
 
+        optimizer_watermark = lambda x: optim.Adam(x, lr=0.0005)
+
+        def cross_entropy(output, target):
+            """Binary cross-entropy metric
+            """
+            return F.cross_entropy(input=output, target=target)
+
+        watermark_model = FederatedModel(build_model=list(collaborator_dict.values())[-1].build_model,
+                                         optimizer=optimizer_watermark, loss_fn=cross_entropy,
+                                         data_loader=watermark_data)
+
+        watermark_collaborator_models = watermark_model.setup(num_collaborators=1)
+        # collaborator_dict.update({"secret_collaborator": watermark_collaborator_models[0]})
+    ################################################################################################################
     # Create the collaborators
     collaborators = {
         collaborator: create_collaborator(
@@ -278,10 +310,14 @@ def run_experiment(collaborator_dict: dict, override_config: dict = None):
         ) for collaborator in plan.authorized_cols
     }
 
+    secret_collaborator = create_secret_collaborator(plan, 'secret_collaborator', watermark_collaborator_models[0],
+                                                     aggregator)
+
     for _ in range(rounds_to_train):
         for col in plan.authorized_cols:
             collaborator = collaborators[col]
             collaborator.run_simulation()
+        secret_collaborator.run_simulation()
 
     # Set the weights for the final model
     model.rebuild_model(
