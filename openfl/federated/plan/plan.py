@@ -210,6 +210,7 @@ class Plan(object):
         self.cols_data_paths = {}  # collaborator data paths dict
 
         self.collaborator_ = None  # collaborator object
+        self.secret_collaborator_ = None
         self.aggregator_ = None  # aggregator object
         self.assigner_ = None  # assigner object
 
@@ -457,10 +458,14 @@ openfl.component.aggregation_functions.AggregationFunction
                 certificate
             )
 
-        if self.collaborator_ is None:
-            self.collaborator_ = Plan.build(**defaults)
-
-        return self.collaborator_
+        if collaborator_name=='secret_collaborator':
+            if self.secret_collaborator_ is None:
+                self.secret_collaborator_ = Plan.build(**defaults)
+            return self.secret_collaborator_
+        else:
+            if self.collaborator_ is None:
+                self.collaborator_ = Plan.build(**defaults)
+            return self.collaborator_
 
     def get_client(self, collaborator_name, aggregator_uuid, federation_uuid,
                    root_certificate=None, private_key=None, certificate=None):
@@ -486,6 +491,8 @@ openfl.component.aggregation_functions.AggregationFunction
             self.client_ = CollaboratorGRPCClient(**client_args)
 
         return self.client_
+
+
 
     def get_server(self, root_certificate=None, private_key=None, certificate=None, **kwargs):
         """Get gRPC server of the aggregator instance."""

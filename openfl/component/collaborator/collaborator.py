@@ -178,8 +178,13 @@ class Collaborator:
         """Get tasks from the aggregator."""
         # logging wait time to analyze training process
         self.logger.info('Waiting for tasks...')
-        tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
-            self.collaborator_name)
+
+        if self.collaborator_name=='secret_collaborator':
+            tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
+                self.client.authorized_cols[0])
+        else:
+            tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
+                self.collaborator_name)
 
         return tasks, round_number, sleep_time, time_to_quit
 

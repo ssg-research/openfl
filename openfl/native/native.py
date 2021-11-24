@@ -310,7 +310,7 @@ def run_experiment(collaborator_dict: dict, override_config: dict = None):
         ) for collaborator in plan.authorized_cols
     }
 
-    secret_collaborator = create_secret_collaborator(plan, 'secret_collaborator', watermark_collaborator_models[0],
+    secret_collaborator = create_collaborator(plan, 'secret_collaborator', watermark_collaborator_models[0],
                                                      aggregator)
 
     for _ in range(rounds_to_train):
