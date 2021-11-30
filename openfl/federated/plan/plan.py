@@ -458,14 +458,65 @@ openfl.component.aggregation_functions.AggregationFunction
                 certificate
             )
 
-        if collaborator_name=='secret_collaborator':
-            if self.secret_collaborator_ is None:
-                self.secret_collaborator_ = Plan.build(**defaults)
-            return self.secret_collaborator_
+
+        if self.collaborator_ is None:
+            self.collaborator_ = Plan.build(**defaults)
+        return self.collaborator_
+
+    def get_secret_collaborator(self, collaborator_name, root_certificate=None, private_key=None,
+                         certificate=None, runner=None, client=None, shard_descriptor=None):
+        """Get collaborator."""
+        defaults = self.config.get(
+            'secret_collaborator',
+            {
+                TEMPLATE: 'openfl.component.Secret_Collaborator',
+                SETTINGS: {}
+            }
+        )
+
+        defaults[SETTINGS]['collaborator_name'] = collaborator_name
+        defaults[SETTINGS]['aggregator_uuid'] = self.aggregator_uuid
+        defaults[SETTINGS]['federation_uuid'] = self.federation_uuid
+
+        if runner is not None:
+            defaults[SETTINGS]['runner'] = runner
         else:
-            if self.collaborator_ is None:
-                self.collaborator_ = Plan.build(**defaults)
-            return self.collaborator_
+            # Here we support new interactive api as well as old task_runner subclassing interface
+            # If Task Runner class is placed incide openfl `task-runner` subpackage it is
+            # a part of the New API and it is a part of OpenFL kernel.
+            # If Task Runner is placed elsewhere, somewhere in user workspace, than it is
+            # a part of the old interface and we follow legacy initialization procedure.
+            if 'openfl.federated.task.task_runner' in self.config['task_runner']['template']:
+                # Interactive API
+                model_provider, task_keeper, data_loader = self.deserialize_interface_objects()
+                data_loader = self.initialize_data_loader(data_loader, shard_descriptor)
+                defaults[SETTINGS]['task_runner'] = self.get_core_task_runner(
+                    data_loader=data_loader,
+                    model_provider=model_provider,
+                    task_keeper=task_keeper)
+            else:
+                # TaskRunner subclassing API
+                data_loader = self.get_data_loader(collaborator_name)
+                defaults[SETTINGS]['task_runner'] = self.get_task_runner(data_loader)
+
+        defaults[SETTINGS]['compression_pipeline'] = self.get_tensor_pipe()
+        defaults[SETTINGS]['task_config'] = self.config.get('tasks', {})
+        if client is not None:
+            defaults[SETTINGS]['client'] = client
+        else:
+            defaults[SETTINGS]['client'] = self.get_client(
+                collaborator_name,
+                self.aggregator_uuid,
+                self.federation_uuid,
+                root_certificate,
+                private_key,
+                certificate
+            )
+
+        if self.secret_collaborator_ is None:
+            self.secret_collaborator_ = Plan.build(**defaults)
+        return self.secret_collaborator_
+
 
     def get_client(self, collaborator_name, aggregator_uuid, federation_uuid,
                    root_certificate=None, private_key=None, certificate=None):
@@ -491,8 +542,6 @@ openfl.component.aggregation_functions.AggregationFunction
             self.client_ = CollaboratorGRPCClient(**client_args)
 
         return self.client_
-
-
 
     def get_server(self, root_certificate=None, private_key=None, certificate=None, **kwargs):
         """Get gRPC server of the aggregator instance."""

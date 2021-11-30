@@ -8,11 +8,13 @@ from .assigner import Assigner
 from .assigner import RandomGroupedAssigner
 from .assigner import StaticGroupedAssigner
 from .collaborator import Collaborator
+from .secret_collaborator import Secret_Collaborator
 
 __all__ = [
     'Assigner',
     'RandomGroupedAssigner',
     'StaticGroupedAssigner',
     'Aggregator',
-    'Collaborator'
+    'Collaborator',
+    'Secret_Collaborator'
 ]
