@@ -143,7 +143,7 @@ class Secret_Collaborator:
                  compression_pipeline=None,
                  db_store_rounds=1,
                  watermark_class=10,
-                 watermark_number=100
+                 watermark_number=100,
                  **kwargs):
         """Initialize."""
         self.single_col_cert_common_name = None
