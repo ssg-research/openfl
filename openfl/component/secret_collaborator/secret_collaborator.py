@@ -199,8 +199,6 @@ class Secret_Collaborator:
         import torchvision
         import torch.optim as optim
 
-        classes = 10
-
         wm_transform = torchvision.transforms.Compose([
             torchvision.transforms.Grayscale(),
             torchvision.transforms.Resize(28),
@@ -208,7 +206,8 @@ class Secret_Collaborator:
             torchvision.transforms.ToTensor(),
             torchvision.transforms.Normalize(0.5, 0.5)
         ])
-        watermark_data_path = '/Users/guoyujia/Documents/summer_job/myopenfl/openfl-tutorials/WATERMARK/'
+        watermark_data_path = './data/WATERMARK/'
+        self.generate_mpattern(x_input=28, y_input=28, num_class=self.watermark_class, num_picures=self.watermark_number, watermark_data_path=watermark_data_path)
         watermark_set = Pattern(watermark_data_path, train=False, transform=wm_transform)
         watermark_images, watermark_labels = watermark_set.train_data, np.array(watermark_set.train_labels)
         y_valid_wartermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
@@ -230,6 +229,44 @@ class Secret_Collaborator:
         """
         import torch.nn.functional as F
         return F.cross_entropy(input=output, target=target)
+
+    def generate_mpattern(self, x_input, y_input, num_class, num_picures, watermark_data_path):
+        import imagen as ig
+        import matplotlib.pyplot as plt
+        x_pattern = int(x_input * 2 / 3. - 1)
+        y_pattern = int(y_input * 2 / 3. - 1)
+
+        for cls in range(num_class):
+            # define patterns
+            patterns = []
+            patterns.append(
+                ig.Line(xdensity=x_pattern, ydensity=y_pattern, thickness=0.001, orientation=np.pi * ng.UniformRandom(),
+                        x=ng.UniformRandom() - 0.5, y=ng.UniformRandom() - 0.5, scale=0.8))
+            patterns.append(
+                ig.Arc(xdensity=x_pattern, ydensity=y_pattern, thickness=0.001, orientation=np.pi * ng.UniformRandom(),
+                       x=ng.UniformRandom() - 0.5, y=ng.UniformRandom() - 0.5, size=0.33))
+
+            pat = np.zeros((x_pattern, y_pattern))
+            for i in range(6):
+                j = np.random.randint(len(patterns))
+                pat += patterns[j]()
+            res = pat > 0.5
+            pat = res.astype(int)
+            print(pat)
+
+            x_offset = np.random.randint(x_input - x_pattern + 1)
+            y_offset = np.random.randint(y_input - y_pattern + 1)
+            print(x_offset, y_offset)
+
+            for i in range(num_picures):
+                base = np.random.rand(x_input, y_input)
+                base[x_offset:x_offset + pat.shape[0], y_offset:y_offset + pat.shape[1]] += pat
+                d = np.ones((x_input, x_input))
+                img = np.minimum(base, d)
+                if not os.path.exists(watermark_data_path + str(cls) + "/"):
+                    os.makedirs(watermark_data_path + str(cls) + "/")
+                plt.imsave(watermark_data_path + str(cls) + "/wm_" + str(i + 1) + ".png", img,
+                           cmap=matplotlib.cm.gray)
 
     def set_available_devices(self, cuda: Tuple[str] = ()):
         """
