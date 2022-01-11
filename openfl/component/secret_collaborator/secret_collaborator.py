@@ -20,7 +20,15 @@ import glob
 import numpy as np
 import warnings
 
-
+from PIL import Image
+# from matplotlib import pyplot as plt
+import matplotlib
+import param
+from numpy import pi
+from param.parameterized import ParamOverrides
+from contextlib import contextmanager
+from holoviews import HoloMap, Image, Dimension
+from holoviews.core import BoundingBox, BoundingRegionParameter, SheetCoordinateSystem
 
 class DevicePolicy(Enum):
     """Device assignment policy."""
@@ -53,7 +61,7 @@ class OptTreatment(Enum):
 class Pattern(torch.utils.data.Dataset):
     # This is used to load images from the defined pattern image file
 
-    def __init__(self, root_dir: str, train: bool, transform: torchvision.transforms.Compose,
+    def __init__(self, root_dir: str, n_classes: int, transform: torchvision.transforms.Compose,
                  return_image_path: bool = False) -> None:
         """
         Args:
@@ -71,7 +79,7 @@ class Pattern(torch.utils.data.Dataset):
 
         self.root_dir = root_dir
         self.transform = transform
-        self.n_classes = 10
+        self.n_classes = n_classes
 
         self.data = []
         self.labels = []
@@ -142,8 +150,9 @@ class Secret_Collaborator:
                  delta_updates=False,
                  compression_pipeline=None,
                  db_store_rounds=1,
-                 watermark_class=10,
                  watermark_number=100,
+                 learning_rate=0.0005,
+                 watermark_batch_size=32,
                  **kwargs):
         """Initialize."""
         self.single_col_cert_common_name = None
@@ -170,8 +179,10 @@ class Secret_Collaborator:
 
         self.logger = getLogger(__name__)
 
-        self.watermark_class = watermark_class
+        self.watermark_class = runner.data_loader.num_classes
         self.watermark_number = watermark_number
+        self.learning_rate = learning_rate
+        self.watermark_batch_size = watermark_batch_size
 
         self.set_task_runner(runner)
 
@@ -199,23 +210,26 @@ class Secret_Collaborator:
         import torchvision
         import torch.optim as optim
 
+        x_input = runner.feature_shape[-2]
+        y_input = runner.feature_shape[-1]
+
         wm_transform = torchvision.transforms.Compose([
             torchvision.transforms.Grayscale(),
-            torchvision.transforms.Resize(28),
-            torchvision.transforms.CenterCrop(28),
+            torchvision.transforms.Resize(x_input),
+            torchvision.transforms.CenterCrop(x_input),
             torchvision.transforms.ToTensor(),
             torchvision.transforms.Normalize(0.5, 0.5)
         ])
         watermark_data_path = './data/WATERMARK/'
-        self.generate_mpattern(x_input=28, y_input=28, num_class=self.watermark_class, num_picures=self.watermark_number, watermark_data_path=watermark_data_path)
-        watermark_set = Pattern(watermark_data_path, train=False, transform=wm_transform)
+        self.generate_mpattern(x_input=x_input, y_input=y_input, num_class=self.watermark_class, num_picures=self.watermark_number, watermark_data_path=watermark_data_path)
+        watermark_set = Pattern(watermark_data_path, n_classes=self.watermark_class, transform=wm_transform)
         watermark_images, watermark_labels = watermark_set.train_data, np.array(watermark_set.train_labels)
         y_valid_wartermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
         watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_wartermark,
-                                          batch_size=32,
-                                          num_classes=classes)
+                                          batch_size=self.watermark_batch_size,
+                                          num_classes=self.watermark_class)
 
-        optimizer_watermark = lambda x: optim.Adam(x, lr=0.0005)
+        optimizer_watermark = lambda x: optim.Adam(x, lr=self.learning_rate)
 
         watermark_model = FederatedModel(build_model=runner.build_model,
                                          optimizer=optimizer_watermark, loss_fn=self.cross_entropy,
@@ -231,8 +245,11 @@ class Secret_Collaborator:
         return F.cross_entropy(input=output, target=target)
 
     def generate_mpattern(self, x_input, y_input, num_class, num_picures, watermark_data_path):
-        import imagen as ig
+        import matplotlib
         import matplotlib.pyplot as plt
+        import numbergen as ng
+        import os
+
         x_pattern = int(x_input * 2 / 3. - 1)
         y_pattern = int(y_input * 2 / 3. - 1)
 
@@ -240,10 +257,10 @@ class Secret_Collaborator:
             # define patterns
             patterns = []
             patterns.append(
-                ig.Line(xdensity=x_pattern, ydensity=y_pattern, thickness=0.001, orientation=np.pi * ng.UniformRandom(),
+                Line(xdensity=x_pattern, ydensity=y_pattern, thickness=0.001, orientation=np.pi * ng.UniformRandom(),
                         x=ng.UniformRandom() - 0.5, y=ng.UniformRandom() - 0.5, scale=0.8))
             patterns.append(
-                ig.Arc(xdensity=x_pattern, ydensity=y_pattern, thickness=0.001, orientation=np.pi * ng.UniformRandom(),
+                Arc(xdensity=x_pattern, ydensity=y_pattern, thickness=0.001, orientation=np.pi * ng.UniformRandom(),
                        x=ng.UniformRandom() - 0.5, y=ng.UniformRandom() - 0.5, size=0.33))
 
             pat = np.zeros((x_pattern, y_pattern))
@@ -252,11 +269,11 @@ class Secret_Collaborator:
                 pat += patterns[j]()
             res = pat > 0.5
             pat = res.astype(int)
-            print(pat)
+            # print(pat)
 
             x_offset = np.random.randint(x_input - x_pattern + 1)
             y_offset = np.random.randint(y_input - y_pattern + 1)
-            print(x_offset, y_offset)
+            # print(x_offset, y_offset)
 
             for i in range(num_picures):
                 base = np.random.rand(x_input, y_input)
@@ -304,6 +321,7 @@ class Secret_Collaborator:
         """
         while True:
             tasks, round_number, sleep_time, time_to_quit = self.get_tasks()
+            # round_number -= 1
             if time_to_quit:
                 self.logger.info('End of Federation reached. Exiting...')
                 break
@@ -322,13 +340,14 @@ class Secret_Collaborator:
         # logging wait time to analyze training process
         self.logger.info('Waiting for tasks...')
 
+##########################################################
         if self.collaborator_name=='secret_collaborator':
             tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
                 self.client.authorized_cols[0])
         else:
             tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
                 self.collaborator_name)
-
+##########################################################
         return tasks, round_number, sleep_time, time_to_quit
 
     def do_task(self, task, round_number):
@@ -388,11 +407,20 @@ class Secret_Collaborator:
             func = getattr(self.task_runner, func_name)
             self.logger.info('Using TaskRunner subclassing API')
 
-        global_output_tensor_dict, local_output_tensor_dict = func(
-            col_name=self.collaborator_name,
-            round_num=round_number,
-            input_tensor_dict=input_tensor_dict,
-            **kwargs)
+        if 'train' in func_name:
+            global_output_tensor_dict, local_output_tensor_dict = func(
+                col_name=self.collaborator_name,
+                round_num=round_number-1,
+                input_tensor_dict=input_tensor_dict,
+                # epochs=10,
+                **kwargs)
+        else:
+            global_output_tensor_dict, local_output_tensor_dict = func(
+                col_name=self.collaborator_name,
+                round_num=round_number - 1,
+                input_tensor_dict=input_tensor_dict,
+                **kwargs)
+
 
         # Save global and local output_tensor_dicts to TensorDB
         self.tensor_db.cache_tensor(global_output_tensor_dict)
@@ -426,7 +454,7 @@ class Secret_Collaborator:
                 self.logger.info(
                     f'Attempting to find locally stored {tensor_name} tensor from prior round...'
                 )
-                prior_round = round_number - 1
+                prior_round = round_number-1
                 while prior_round >= 0:
                     nparray = self.tensor_db.get_tensor_from_cache(
                         TensorKey(tensor_name, origin, prior_round, report, tags))
@@ -527,6 +555,7 @@ class Secret_Collaborator:
 
     def send_task_results(self, tensor_dict, round_number, task_name):
         """Send task results to the aggregator."""
+        round_number-=1
         named_tensors = [
             self.nparray_to_named_tensor(k, v) for k, v in tensor_dict.items()
         ]
@@ -553,7 +582,7 @@ class Secret_Collaborator:
                     f'is sending metric for task {task_name}:'
                     f' {tensor_name}\t{tensor_dict[tensor]}')
 
-        self.client.send_local_task_results(
+        self.client.send_watermark_results(
             self.collaborator_name, round_number, task_name, data_size, named_tensors)
 
     def nparray_to_named_tensor(self, tensor_key, nparray):
@@ -658,3 +687,191 @@ class Secret_Collaborator:
         )
 
         return decompressed_nparray
+
+@contextmanager
+def float_error_ignore():
+    oldsettings=np.seterr(divide='ignore', under='ignore')
+    yield
+    np.seterr(**oldsettings)
+
+
+class PatternGenerator(param.Parameterized):
+    __abstract = True
+
+    bounds = BoundingRegionParameter(
+        default=BoundingBox(points=((-0.5, -0.5), (0.5, 0.5))), precedence=-1)
+
+    xdensity = param.Number(default=256, bounds=(0, None), precedence=-1)
+    ydensity = param.Number(default=256, bounds=(0, None), precedence=-1)
+
+    x = param.Number(default=0.0, softbounds=(-1.0, 1.0), precedence=0.20)
+    y = param.Number(default=0.0, softbounds=(-1.0, 1.0), precedence=0.21)
+    z = param.ClassSelector(default=None, precedence=-1, class_=Dimension)
+
+    group = param.String(default='Pattern', precedence=-1)
+
+    position = param.Composite(attribs=['x', 'y'], precedence=-1)
+    orientation = param.Number(default=0.0, softbounds=(0.0, 2 * pi), precedence=0.40)
+
+    size = param.Number(default=1.0, bounds=(0.0, None), softbounds=(0.0, 6.0),
+                        precedence=0.30)
+
+    scale = param.Number(default=1.0, softbounds=(0.0, 2.0), precedence=0.10)
+
+    offset = param.Number(default=0.0, softbounds=(-1.0, 1.0), precedence=0.11)
+
+    mask = param.Parameter(default=None, precedence=-1)
+
+    mask_shape = param.ClassSelector(param.Parameterized, default=None, precedence=0.06)
+
+    output_fns = param.HookList(default=[], precedence=0.08)
+
+    def __init__(self, **params):
+        super(PatternGenerator, self).__init__(**params)
+        self.set_matrix_dimensions(self.bounds, self.xdensity, self.ydensity)
+
+    def __call__(self, **params_to_override):
+        p = ParamOverrides(self, params_to_override)
+
+        self._setup_xy(p.bounds, p.xdensity, p.ydensity, p.x, p.y, p.orientation)
+        fn_result = self.function(p)
+        self._apply_mask(p, fn_result)
+        if p.scale != 1.0:
+            result = p.scale * fn_result
+        else:
+            result = fn_result
+        if p.offset != 0.0:
+            result += p.offset
+
+        for of in p.output_fns:
+            of(result)
+
+        return result
+
+    def __getitem__(self, coords):
+        value_dims = {}
+
+        raster, data = Image, self()
+        value_dims = {'value_dimensions': [self.z]} if self.z else value_dims
+
+        image = raster(data, bounds=self.bounds,
+                       **dict(group=self.group,
+                              label=self.__class__.__name__, **value_dims))
+        # Works round a bug fixed shortly after HoloViews 1.0.0 release
+        return image if isinstance(coords, slice) else image.__getitem__(coords)
+
+    def _setup_xy(self, bounds, xdensity, ydensity, x, y, orientation):
+        x_points, y_points = SheetCoordinateSystem(bounds, xdensity, ydensity).sheetcoordinates_of_matrixidx()
+
+        self.pattern_x, self.pattern_y = self._create_and_rotate_coordinate_arrays(x_points - x, y_points - y,
+                                                                                   orientation)
+
+    def _create_and_rotate_coordinate_arrays(self, x, y, orientation):
+
+        pattern_y = np.subtract.outer(np.cos(orientation) * y, np.sin(orientation) * x)
+        pattern_x = np.add.outer(np.sin(orientation) * y, np.cos(orientation) * x)
+        return pattern_x, pattern_y
+
+    def _apply_mask(self, p, mat):
+        mask = p.mask
+        ms = p.mask_shape
+        if ms is not None:
+            mask = ms(x=p.x + p.size * (ms.x * np.cos(p.orientation) - ms.y * np.sin(p.orientation)),
+                      y=p.y + p.size * (ms.x * np.sin(p.orientation) + ms.y * np.cos(p.orientation)),
+                      orientation=ms.orientation + p.orientation, size=ms.size * p.size,
+                      bounds=p.bounds, ydensity=p.ydensity, xdensity=p.xdensity)
+        if mask is not None:
+            mat *= mask
+
+    def set_matrix_dimensions(self, bounds, xdensity, ydensity):
+        self.bounds = bounds
+        self.xdensity = xdensity
+        self.ydensity = ydensity
+
+
+class Line(PatternGenerator):
+    size = param.Number(precedence=-1.0)
+
+    thickness = param.Number(default=0.006, bounds=(0.0, None), softbounds=(0.0, 1.0),
+                             precedence=0.60)
+    enforce_minimal_thickness = param.Boolean(default=False, precedence=0.60)
+
+    smoothing = param.Number(default=0.05, bounds=(0.0, None), softbounds=(0.0, 0.5),
+                             precedence=0.61)
+
+    def function(self, p):
+        distance_from_line = abs(self.pattern_y)
+        gaussian_y_coord = distance_from_line - p.thickness / 2.0
+        sigmasq = p.smoothing * p.smoothing
+
+        if sigmasq == 0.0:
+            falloff = self.pattern_y * 0.0
+        else:
+            with float_error_ignore():
+                falloff = np.exp(np.divide(-gaussian_y_coord * gaussian_y_coord, 2 * sigmasq))
+
+        return np.where(gaussian_y_coord <= 0, 1.0, falloff)
+
+class Arc(PatternGenerator):
+    aspect_ratio = param.Number(default=1.0, bounds=(0.0, None), softbounds=(0.0, 6.0), precedence=0.31)
+
+    thickness = param.Number(default=0.015, bounds=(0.0, None), softbounds=(0.0, 0.5), precedence=0.60)
+
+    smoothing = param.Number(default=0.05, bounds=(0.0, None), softbounds=(0.0, 0.5), precedence=0.61)
+
+    arc_length = param.Number(default=pi, bounds=(0.0, None), softbounds=(0.0, 2.0*pi),
+                              inclusive_bounds=(True, False), precedence=0.62)
+
+    size = param.Number(default=0.5)
+
+    def arc_by_radian(self, x, y, height, radian_range, thickness, gaussian_width):
+        radius = height / 2.0
+        half_thickness = thickness / 2.0
+
+        distance_from_origin = np.sqrt(x ** 2 + y ** 2)
+        distance_outside_outer_disk = distance_from_origin - radius - half_thickness
+        distance_inside_inner_disk = radius - half_thickness - distance_from_origin
+
+        ring = 1.0 - np.bitwise_xor(np.greater_equal(distance_inside_inner_disk, 0.0),
+                                    np.greater_equal(distance_outside_outer_disk, 0.0))
+
+        sigmasq = gaussian_width * gaussian_width
+
+        if sigmasq == 0.0:
+            inner_falloff = x * 0.0
+            outer_falloff = x * 0.0
+        else:
+            with float_error_ignore():
+                inner_falloff = np.exp(
+                    np.divide(-distance_inside_inner_disk * distance_inside_inner_disk, 2.0 * sigmasq))
+                outer_falloff = np.exp(
+                    np.divide(-distance_outside_outer_disk * distance_outside_outer_disk, 2.0 * sigmasq))
+
+        output_ring = np.maximum(inner_falloff, np.maximum(outer_falloff, ring))
+
+        distance_from_origin += np.where(distance_from_origin == 0.0, 1e-5, 0)
+
+        with float_error_ignore():
+            sines = np.divide(y, distance_from_origin)
+            cosines = np.divide(x, distance_from_origin)
+            arcsines = np.arcsin(sines)
+
+        phase_1 = np.where(np.logical_and(sines >= 0, cosines >= 0), 2 * pi - arcsines, 0)
+        phase_2 = np.where(np.logical_and(sines >= 0, cosines < 0), pi + arcsines, 0)
+        phase_3 = np.where(np.logical_and(sines < 0, cosines < 0), pi + arcsines, 0)
+        phase_4 = np.where(np.logical_and(sines < 0, cosines >= 0), -arcsines, 0)
+        arcsines = phase_1 + phase_2 + phase_3 + phase_4
+
+        if radian_range[0] <= radian_range[1]:
+            return np.where(np.logical_and(arcsines >= radian_range[0], arcsines <= radian_range[1]),
+                            output_ring, 0.0)
+        else:
+            return np.where(np.logical_or(arcsines >= radian_range[0], arcsines <= radian_range[1]),
+                            output_ring, 0.0)
+
+    def function(self, p):
+        if p.aspect_ratio == 0.0:
+            return self.pattern_x*0.0
+
+        return self.arc_by_radian(self.pattern_x/p.aspect_ratio, self.pattern_y, p.size,
+                             (2*pi-p.arc_length, 0.0), p.thickness, p.smoothing)

@@ -101,6 +101,7 @@ print(f'Collaborator two\'s validation data size: {len(collaborator_models[1].da
 print(fx.get_plan())
 
 final_fl_model = fx.run_experiment(collaborators, override_config={
-    'aggregator.settings.rounds_to_train': 5,
+    'aggregator.settings.rounds_to_train': 100,
     'aggregator.settings.log_metric_callback': write_metric,
+    'secret_collaborator.settings.watermark': 'true'
 })

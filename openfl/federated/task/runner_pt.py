@@ -128,8 +128,8 @@ class PyTorchTaskRunner(nn.Module, TaskRunner):
         # Empty list represents metrics that should only be stored locally
         return output_tensor_dict, {}
 
-    def train_batches(self, col_name, round_num, input_tensor_dict,
-                      use_tqdm=False, epochs=1, **kwargs):
+    def train_batches(self, col_name, round_num, input_tensor_dict, epochs=1,
+                      use_tqdm=False, **kwargs):
         """Train batches.
 
         Train the model on the requested number of batches.

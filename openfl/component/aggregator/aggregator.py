@@ -530,6 +530,81 @@ class Aggregator:
 
         self._end_of_task_check(task_name)
 
+    def send_watermark_results(self, collaborator_name, round_number, task_name,
+                                data_size, named_tensors):
+        """
+        RPC called by collaborator.
+
+        Transmits collaborator's task results to the aggregator.
+
+        Args:
+            collaborator_name: str
+            task_name: str
+            round_number: int
+            data_size: int
+            named_tensors: protobuf NamedTensor
+        Returns:
+             None
+        """
+        self.logger.info(
+            f'Collaborator {collaborator_name} is sending task results '
+            f'for {task_name}, round {round_number}'
+        )
+
+        task_key = TaskResultKey(task_name, collaborator_name, round_number)
+
+        # we mustn't have results already
+        if self._collaborator_task_completed(
+                collaborator_name, task_name, round_number
+        ):
+            raise ValueError(
+                f'Aggregator already has task results from collaborator {collaborator_name}'
+                f' for task {task_key}'
+            )
+
+        # initialize the list of tensors that go with this task
+        # Setting these incrementally is leading to missing values
+        task_results = []
+
+        # go through the tensors and add them to the tensor dictionary and the
+        # task dictionary
+        for named_tensor in named_tensors:
+            # sanity check that this tensor has been updated
+            if named_tensor.round_number != round_number:
+                raise ValueError(
+                    f'Collaborator {collaborator_name} is reporting results for the wrong round.'
+                    f' Exiting...'
+                )
+
+            # quite a bit happens in here, including decompression, delta
+            # handling, etc...
+            tensor_key, nparray = self._process_named_tensor(
+                named_tensor, collaborator_name
+            )
+            if 'metric' in tensor_key.tags:
+                metric_dict = {
+                    'metric_origin': tensor_key.tags[-1],
+                    'task_name': task_name,
+                    'metric_name': tensor_key.tensor_name,
+                    'metric_value': nparray,
+                    'round': round_number}
+                self.log_metric(tensor_key.tags[-1], task_name,
+                                tensor_key.tensor_name, nparray, round_number)
+                self.logger.metric(f'Round {round_number}, collaborator {tensor_key.tags[-1]} '
+                                   f'{task_name} result {tensor_key.tensor_name}:\t{nparray}')
+                self.metric_queue.put(metric_dict)
+
+            task_results.append(tensor_key)
+            # By giving task_key it's own weight, we can support different
+            # training/validation weights
+            # As well as eventually supporting weights that change by round
+            # (if more data is added)
+            self.collaborator_task_weight[task_key] = data_size
+
+        self.collaborator_tasks_results[task_key] = task_results
+
+        self._end_of_watermark_check(task_name, collaborator_name, round_number)
+
     def _process_named_tensor(self, named_tensor, collaborator_name):
         """
         Extract the named tensor fields.
@@ -639,6 +714,55 @@ class Aggregator:
         if self._is_task_done(task_name):
             # now check for the end of the round
             self._end_of_round_check()
+
+    def _end_of_watermark_check(self, task_name, collaborator_name, round_number):
+        """
+        Check whether all collaborators who are supposed to perform the task complete.
+
+        Args:
+            task_name : str
+                The task name to check
+
+        Returns:
+            complete : boolean
+                Is the task done
+        """
+        # if self._is_task_done(task_name):
+        # now check for the end of the round
+        # self._end_of_round_check()
+
+        tasks_for_round = self.assigner.get_all_tasks_for_round(
+            round_number
+        )
+
+        if not all([self._collaborator_task_completed(
+                collaborator_name, t, round_number) for t in tasks_for_round]):
+            return
+
+        # if not self._is_round_done():
+        #     return
+
+        # Compute all validation related metrics
+        all_tasks = self.assigner.get_all_tasks_for_round(round_number)
+        for task_name in all_tasks:
+            self._compute_validation_watermark_related_task_metrics(task_name, collaborator_name, round_number)
+
+        # Once all of the task results have been processed
+        # Increment the round number
+        # self.round_number += 1
+
+        # Save the latest model
+        self.logger.info(f'Saving round {round_number} watermarked model...')
+        self._save_model(round_number, self.last_state_path)
+
+        # TODO This needs to be fixed!
+        if self._time_to_quit():
+            self.logger.info('Experiment Completed. Cleaning up...')
+        else:
+            self.logger.info(f'Starting round {self.round_number}...')
+
+        # Cleaning tensor db
+        self.tensor_db.clean_up(self.db_store_rounds)
 
     def _prepare_trained(self, tensor_name, origin, round_number, report, agg_results):
         """
@@ -768,6 +892,80 @@ class Aggregator:
         # tensor for that round
         task_agg_function = self.assigner.get_aggregation_type_for_task(task_name)
         task_key = TaskResultKey(task_name, collaborators_for_task[0], self.round_number)
+        for tensor_key in self.collaborator_tasks_results[task_key]:
+            tensor_name, origin, round_number, report, tags = tensor_key
+            assert (tags[-1] == collaborators_for_task[0]), (
+                f'Tensor {tensor_key} in task {task_name} has not been processed correctly'
+            )
+
+            # Strip the collaborator label, and lookup aggregated tensor
+            new_tags = tuple(tags[:-1])
+            agg_tensor_key = TensorKey(tensor_name, origin, round_number, report, new_tags)
+            agg_tensor_name, agg_origin, agg_round_number, agg_report, agg_tags = agg_tensor_key
+            agg_function = WeightedAverage() if 'metric' in tags else task_agg_function
+            agg_results = self.tensor_db.get_aggregated_tensor(
+                agg_tensor_key, collaborator_weight_dict, aggregation_function=agg_function)
+            if report:
+                # Print the aggregated metric
+                metric_dict = {
+                    'metric_origin': 'Aggregator',
+                    'task_name': task_name,
+                    'metric_name': tensor_key.tensor_name,
+                    'metric_value': agg_results,
+                    'round': round_number}
+
+                if agg_results is None:
+                    self.logger.warning(
+                        f'Aggregated metric {agg_tensor_name} could not be collected '
+                        f'for round {self.round_number}. Skipping reporting for this round')
+                if agg_function:
+                    self.logger.metric(f'Round {round_number}, aggregator: {task_name} '
+                                       f'{agg_function} {agg_tensor_name}:\t{agg_results:.4f}')
+                else:
+                    self.logger.metric(f'Round {round_number}, aggregator: {task_name} '
+                                       f'{agg_tensor_name}:\t{agg_results:.4f}')
+                self.log_metric('Aggregator', task_name, tensor_key.tensor_name,
+                                agg_results, round_number)
+                self.metric_queue.put(metric_dict)
+                # TODO Add all of the logic for saving the model based
+                #  on best accuracy, lowest loss, etc.
+                if 'validate_agg' in tags:
+                    # Compare the accuracy of the model, and
+                    # potentially save it
+                    if self.best_model_score is None or self.best_model_score < agg_results:
+                        self.logger.metric(f'Round {round_number}: saved the best '
+                                           f'model with score {agg_results:f}')
+                        self.best_model_score = agg_results
+                        self._save_model(round_number, self.best_state_path)
+            if 'trained' in tags:
+                self._prepare_trained(tensor_name, origin, round_number, report, agg_results)
+
+    def _compute_validation_watermark_related_task_metrics(self, task_name, collaborator_name, round_number):
+        """
+        Compute all validation related metrics.
+
+        Args:
+            task_name : str
+                The task name to compute
+        """
+        # By default, print out all of the metrics that the validation
+        # task sent
+        # This handles getting the subset of collaborators that may be
+        # part of the validation task
+        collaborators_for_task = [collaborator_name]
+        # The collaborator data sizes for that task
+
+        collaborator_weight_dict = {collaborator_name: 1}
+
+
+        # The validation task should have just a couple tensors (i.e.
+        # metrics) associated with it. Because each collaborator should
+        # have sent the same tensor list, we can use the first
+        # collaborator in our subset, and apply the correct
+        # transformations to the tensorkey to resolve the aggregated
+        # tensor for that round
+        task_agg_function = self.assigner.get_aggregation_type_for_task(task_name)
+        task_key = TaskResultKey(task_name, collaborators_for_task[0], round_number)
         for tensor_key in self.collaborator_tasks_results[task_key]:
             tensor_name, origin, round_number, report, tags = tensor_key
             assert (tags[-1] == collaborators_for_task[0]), (

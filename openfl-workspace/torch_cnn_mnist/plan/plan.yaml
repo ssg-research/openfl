@@ -27,11 +27,10 @@ secret_collaborator :
   settings :
     delta_updates    : false
     opt_treatment    : RESET
-    watermark        : true
-    watermark_class  : 10
+    watermark        : false
     watermark_number : 100
-
-
+    learning_rate    : 0.0005
+    watermark_batch_size: 32
 
 data_loader :
   defaults : plan/defaults/data_loader.yaml
