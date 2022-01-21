@@ -20,9 +20,9 @@ import glob
 import numpy as np
 import warnings
 
-from PIL import Image
+from PIL import Image as Img
 # from matplotlib import pyplot as plt
-import matplotlib
+#import matplotlib
 import param
 from numpy import pi
 from param.parameterized import ParamOverrides
@@ -74,7 +74,7 @@ class Pattern(torch.utils.data.Dataset):
         """
 
         import torchvision.transforms as transforms
-        from PIL import Image
+        #from PIL import Image
         import os
 
         self.root_dir = root_dir
@@ -87,7 +87,7 @@ class Pattern(torch.utils.data.Dataset):
             dirs = os.path.join(self.root_dir, '%d' % i)
             for idx, fimg in enumerate(glob.glob(os.path.join(dirs, '*.png'))):
                 if idx < 10:
-                    image = Image.open(fimg)
+                    image = Img.open(fimg)
                     image = np.array(self.transform(image.convert('RGB')))
                     self.data.append(image)
                     self.labels.append(i)
@@ -245,8 +245,8 @@ class Secret_Collaborator:
         return F.cross_entropy(input=output, target=target)
 
     def generate_mpattern(self, x_input, y_input, num_class, num_picures, watermark_data_path):
-        import matplotlib
-        import matplotlib.pyplot as plt
+        #import matplotlib
+        #import matplotlib.pyplot as plt
         import numbergen as ng
         import os
 
@@ -282,8 +282,8 @@ class Secret_Collaborator:
                 img = np.minimum(base, d)
                 if not os.path.exists(watermark_data_path + str(cls) + "/"):
                     os.makedirs(watermark_data_path + str(cls) + "/")
-                plt.imsave(watermark_data_path + str(cls) + "/wm_" + str(i + 1) + ".png", img,
-                           cmap=matplotlib.cm.gray)
+                image = Img.fromarray((img*255).astype(np.uint8))
+                image.save(watermark_data_path + str(cls) + "/wm_" + str(i + 1) + ".png")
 
     def set_available_devices(self, cuda: Tuple[str] = ()):
         """
