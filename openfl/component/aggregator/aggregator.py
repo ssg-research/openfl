@@ -5,7 +5,7 @@
 import queue
 from logging import getLogger
 
-from openfl.component.aggregation_functions import WeightedAverage
+from openfl.component.aggregation_functions import WeightedAverage, Replace
 from openfl.databases import TensorDB
 from openfl.pipelines import NoCompressionPipeline
 from openfl.pipelines import TensorCodec
@@ -582,16 +582,19 @@ class Aggregator:
                 named_tensor, collaborator_name
             )
             if 'metric' in tensor_key.tags:
+                metric_value = nparray.item()
                 metric_dict = {
                     'metric_origin': tensor_key.tags[-1],
                     'task_name': task_name,
                     'metric_name': tensor_key.tensor_name,
-                    'metric_value': nparray,
+                    'metric_value': metric_value,
                     'round': round_number}
                 self.log_metric(tensor_key.tags[-1], task_name,
                                 tensor_key.tensor_name, nparray, round_number)
-                self.logger.metric(f'Round {round_number}, collaborator {tensor_key.tags[-1]} '
-                                   f'{task_name} result {tensor_key.tensor_name}:\t{nparray}')
+                self.logger.metric(f'Round {round_number}, '
+                                   f'collaborator {tensor_key.tags[-1]} '
+                                   f'{task_name} result '
+                                   f'{tensor_key.tensor_name}:\t{metric_value:f}')
                 self.metric_queue.put(metric_dict)
 
             task_results.append(tensor_key)
@@ -762,7 +765,7 @@ class Aggregator:
             self.logger.info(f'Starting round {self.round_number}...')
 
         # Cleaning tensor db
-        self.tensor_db.clean_up(self.db_store_rounds)
+        #self.tensor_db.clean_up(self.db_store_rounds)
 
     def _prepare_trained(self, tensor_name, origin, round_number, report, agg_results):
         """
@@ -874,6 +877,8 @@ class Aggregator:
         # part of the validation task
         collaborators_for_task = self.assigner.get_collaborators_for_task(
             task_name, self.round_number)
+        if 'secret' in collaborators_for_task and 'validation' in task_name:
+            collaborators_for_task.remove('secret')
         # The collaborator data sizes for that task
         collaborator_weights_unnormalized = {
             c: self.collaborator_task_weight[TaskResultKey(task_name, c, self.round_number)]
@@ -905,6 +910,7 @@ class Aggregator:
             agg_function = WeightedAverage() if 'metric' in tags else task_agg_function
             agg_results = self.tensor_db.get_aggregated_tensor(
                 agg_tensor_key, collaborator_weight_dict, aggregation_function=agg_function)
+
             if report:
                 # Print the aggregated metric
                 metric_dict = {
@@ -913,7 +919,6 @@ class Aggregator:
                     'metric_name': tensor_key.tensor_name,
                     'metric_value': agg_results,
                     'round': round_number}
-
                 if agg_results is None:
                     self.logger.warning(
                         f'Aggregated metric {agg_tensor_name} could not be collected '
@@ -977,8 +982,9 @@ class Aggregator:
             agg_tensor_key = TensorKey(tensor_name, origin, round_number, report, new_tags)
             agg_tensor_name, agg_origin, agg_round_number, agg_report, agg_tags = agg_tensor_key
             agg_function = WeightedAverage() if 'metric' in tags else task_agg_function
+
             agg_results = self.tensor_db.get_aggregated_tensor(
-                agg_tensor_key, collaborator_weight_dict, aggregation_function=agg_function)
+                agg_tensor_key, collaborator_weight_dict, aggregation_function=agg_function, secret=True)
             if report:
                 # Print the aggregated metric
                 metric_dict = {
@@ -1003,14 +1009,14 @@ class Aggregator:
                 self.metric_queue.put(metric_dict)
                 # TODO Add all of the logic for saving the model based
                 #  on best accuracy, lowest loss, etc.
-                if 'validate_agg' in tags:
+                #if 'validate_agg' in tags:
                     # Compare the accuracy of the model, and
                     # potentially save it
-                    if self.best_model_score is None or self.best_model_score < agg_results:
-                        self.logger.metric(f'Round {round_number}: saved the best '
-                                           f'model with score {agg_results:f}')
-                        self.best_model_score = agg_results
-                        self._save_model(round_number, self.best_state_path)
+                    #if self.best_model_score is None or self.best_model_score < agg_results:
+                    #    self.logger.metric(f'Round {round_number}: saved the best '
+                    #                       f'model with score {agg_results:f}')
+                    #    self.best_model_score = agg_results
+                    #self._save_model(round_number, self.best_state_path)
             if 'trained' in tags:
                 self._prepare_trained(tensor_name, origin, round_number, report, agg_results)
 
