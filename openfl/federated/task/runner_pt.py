@@ -94,11 +94,13 @@ class PyTorchTaskRunner(nn.Module, TaskRunner):
         self.to(self.device)
         val_score = 0
         total_samples = 0
-
-        loader = self.data_loader.get_valid_loader()
+        if col_name == 'secret':
+            loader = self.data_loader.get_watermark_validation_loader()
+        else:
+            loader = self.data_loader.get_valid_loader()
+        #loader = self.data_loader.get_watermark_validation_loader()
         if use_tqdm:
             loader = tqdm.tqdm(loader, desc='validate')
-
         with pt.no_grad():
             for data, target in loader:
                 samples = target.shape[0]
@@ -149,9 +151,15 @@ class PyTorchTaskRunner(nn.Module, TaskRunner):
         # set to "training" mode
         self.train()
         self.to(self.device)
+        if col_name == 'secret':
+            epochs = 100
         for epoch in range(epochs):
             self.logger.info(f'Run {epoch} epoch of {round_num} round')
-            loader = self.data_loader.get_train_loader()
+            if col_name == 'secret':
+                loader = self.data_loader.get_watermark_train_loader()
+            else:
+                loader = self.data_loader.get_train_loader()
+            #loader = self.data_loader.get_train_loader()
             if use_tqdm:
                 loader = tqdm.tqdm(loader, desc='train epoch')
             metric = self.train_epoch(loader)
