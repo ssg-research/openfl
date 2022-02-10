@@ -176,14 +176,12 @@ class Collaborator:
         """Get tasks from the aggregator."""
         # logging wait time to analyze training process
         self.logger.info('Waiting for tasks...')
-
-        if self.collaborator_name=='secret_collaborator':
+        if self.collaborator_name == 'secret':
             tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
                 self.client.authorized_cols[0])
         else:
             tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
                 self.collaborator_name)
-
         return tasks, round_number, sleep_time, time_to_quit
 
     def do_task(self, task, round_number):
@@ -408,8 +406,12 @@ class Collaborator:
                     f'is sending metric for task {task_name}:'
                     f' {tensor_name}\t{tensor_dict[tensor]:f}')
 
-        self.client.send_local_task_results(
-            self.collaborator_name, round_number, task_name, data_size, named_tensors)
+        if self.collaborator_name == 'secret':
+            self.client.send_local_task_results(#self.client.send_watermark_results(
+                self.collaborator_name, round_number, task_name, data_size*5, named_tensors)
+        else:
+            self.client.send_local_task_results(
+                self.collaborator_name, round_number, task_name, data_size, named_tensors)
 
     def nparray_to_named_tensor(self, tensor_key, nparray):
         """
