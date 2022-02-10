@@ -182,6 +182,7 @@ def init(workspace_template: str = 'default', log_level: str = 'INFO',
     """
     if col_names is None:
         col_names = ['one', 'two']
+    col_names.append('secret')
     workspace.create(WORKSPACE_PREFIX, workspace_template)
     os.chdir(WORKSPACE_PREFIX)
     workspace.certify()
@@ -209,7 +210,7 @@ def create_collaborator(plan, name, model, aggregator):
 
     return plan.get_collaborator(name, task_runner=model, client=aggregator)
 
-def create_secret_collaborator(plan, name, model, aggregator):
+def create_secret_collaborator(plan, name, aggregator):
     """
     Create the secret collaborator.
 
@@ -219,7 +220,7 @@ def create_secret_collaborator(plan, name, model, aggregator):
     """
     plan = copy(plan)
 
-    return plan.get_secret_collaborator(name, runner=model, client=aggregator)
+    return plan.get_secret_collaborator(name, client=aggregator)
 
 
 def run_experiment(collaborator_dict: dict, override_config: dict = None):
@@ -262,10 +263,13 @@ def run_experiment(collaborator_dict: dict, override_config: dict = None):
     # tensorflow session to get created)
     plan.runner_ = list(collaborator_dict.values())[-1]
     model = plan.runner_
-
+    watermark_enabled = plan.config['secret_collaborator']['settings']['watermark']
+    if watermark_enabled == 'true':
+        plan.authorized_cols.append('secret')
     # Initialize model weights
     init_state_path = plan.config['aggregator']['settings']['init_state_path']
     rounds_to_train = plan.config['aggregator']['settings']['rounds_to_train']
+
     tensor_dict, holdout_params = split_tensor_dict_for_holdouts(
         logger,
         model.get_tensor_dict(False)
@@ -283,25 +287,30 @@ def run_experiment(collaborator_dict: dict, override_config: dict = None):
 
     aggregator = plan.get_aggregator()
 
-    watermark_enabled = plan.config['secret_collaborator']['settings']['watermark']
-
-    # Create the collaborators
-    collaborators = {
+    # add secret collaborator
+    if watermark_enabled == 'true':
+        secret_collaborator = create_secret_collaborator(plan, 'secret', aggregator)
+        # Create the collaborators
+        collaborators = {
+        collaborator: create_collaborator(
+            plan, collaborator, collaborator_dict[collaborator], aggregator
+        ) for collaborator in plan.authorized_cols[:-1]
+        }
+    else:
+        # Create the collaborators
+        collaborators = {
         collaborator: create_collaborator(
             plan, collaborator, collaborator_dict[collaborator], aggregator
         ) for collaborator in plan.authorized_cols
-    }
-
-    if watermark_enabled:
-        secret_collaborator = create_secret_collaborator(plan, 'secret_collaborator', model,
-                                                     aggregator)
+        }
 
     for _ in range(rounds_to_train):
-        for col in plan.authorized_cols:
-            collaborator = collaborators[col]
-            collaborator.run_simulation()
-        if watermark_enabled:
+        if watermark_enabled == 'true':
             secret_collaborator.run_simulation()
+        for col in plan.authorized_cols:
+            if col != 'secret':
+                collaborator = collaborators[col]
+                collaborator.run_simulation()
 
     # Set the weights for the final model
     model.rebuild_model(
