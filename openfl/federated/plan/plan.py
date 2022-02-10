@@ -356,6 +356,29 @@ openfl.component.aggregation_functions.AggregationFunction
 
         return self.loader_
 
+    def get_watermark_loader(self):
+        """get watermark loader"""
+        import torch, torchvision
+        import numpy as np
+        from openfl.component.secret_collaborator import Pattern
+        from openfl.federated.data import FederatedDataSet
+        wm_transform = torchvision.transforms.Compose([
+            #torchvision.transforms.Grayscale(),
+            #torchvision.transforms.Resize(x_input),
+            #torchvision.transforms.CenterCrop(x_input),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(0.5, 0.5)
+        ])
+        watermark_data_path = './data/WATERMARK/'
+        watermark_set = Pattern(watermark_data_path, n_classes=10, transform=wm_transform)
+        watermark_images, watermark_labels = torch.stack(watermark_set.train_data).float(), np.array(watermark_set.train_labels)
+        y_valid_watermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
+        watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_watermark,
+                                          batch_size=50,
+                                          num_classes=10)
+        self.loader_ = watermark_data
+        return self.loader_
+
     # Python interactive api
     def initialize_data_loader(self, data_loader, shard_descriptor):
         """Get data loader."""
@@ -464,12 +487,12 @@ openfl.component.aggregation_functions.AggregationFunction
         return self.collaborator_
 
     def get_secret_collaborator(self, collaborator_name, root_certificate=None, private_key=None,
-                         certificate=None, runner=None, client=None, shard_descriptor=None):
-        """Get collaborator."""
+                         certificate=None, task_runner=None, client=None, shard_descriptor=None):
+        """Get secret collaborator."""
         defaults = self.config.get(
-            'secret_collaborator',
+            'collaborator',
             {
-                TEMPLATE: 'openfl.component.Secret_Collaborator',
+                TEMPLATE: 'openfl.component.Collaborator',
                 SETTINGS: {}
             }
         )
@@ -478,43 +501,51 @@ openfl.component.aggregation_functions.AggregationFunction
         defaults[SETTINGS]['aggregator_uuid'] = self.aggregator_uuid
         defaults[SETTINGS]['federation_uuid'] = self.federation_uuid
 
-        if runner is not None:
-            defaults[SETTINGS]['runner'] = runner
-        else:
+        #defaults[SETTINGS]['task_config']['train']['kwargs']['epochs'] = 100
+
+
+        #if task_runner is not None:
+        #    defaults[SETTINGS]['runner'] = task_runner
+        #else:
             # Here we support new interactive api as well as old task_runner subclassing interface
             # If Task Runner class is placed incide openfl `task-runner` subpackage it is
             # a part of the New API and it is a part of OpenFL kernel.
             # If Task Runner is placed elsewhere, somewhere in user workspace, than it is
             # a part of the old interface and we follow legacy initialization procedure.
-            if 'openfl.federated.task.task_runner' in self.config['task_runner']['template']:
-                # Interactive API
-                model_provider, task_keeper, data_loader = self.deserialize_interface_objects()
-                data_loader = self.initialize_data_loader(data_loader, shard_descriptor)
-                defaults[SETTINGS]['task_runner'] = self.get_core_task_runner(
-                    data_loader=data_loader,
-                    model_provider=model_provider,
-                    task_keeper=task_keeper)
-            else:
+        #    if 'openfl.federated.task.task_runner' in self.config['task_runner']['template']:
+        #        # Interactive API
+        #        model_provider, task_keeper, data_loader = self.deserialize_interface_objects()
+        #        data_loader = self.initialize_data_loader(data_loader, shard_descriptor)
+        #        defaults[SETTINGS]['task_runner'] = self.get_core_task_runner(
+        #            data_loader=data_loader,
+        #            model_provider=model_provider,
+        #            task_keeper=task_keeper)
+        #    else:
                 # TaskRunner subclassing API
-                data_loader = self.get_data_loader(collaborator_name)
-                defaults[SETTINGS]['task_runner'] = self.get_task_runner(data_loader)
+        data_loader = self.get_watermark_loader()
+        # get task runner for watermarker
+        defaults[SETTINGS]['task_runner'] = self.get_task_runner(data_loader)
+        defaults[SETTINGS]['data_loader'] = data_loader
+        #defaults[SETTINGS]['task_runner'].data_loader = data_loader
 
         defaults[SETTINGS]['compression_pipeline'] = self.get_tensor_pipe()
         defaults[SETTINGS]['task_config'] = self.config.get('tasks', {})
         if client is not None:
             defaults[SETTINGS]['client'] = client
-        else:
-            defaults[SETTINGS]['client'] = self.get_client(
-                collaborator_name,
-                self.aggregator_uuid,
-                self.federation_uuid,
-                root_certificate,
-                private_key,
-                certificate
-            )
+        #else:
+        #certificate = f'cert/client/col_{common_name}.crt'
+        #private_key = f'cert/client/col_{common_name}.key'
+        #from openfl.interface.cli_helper import CERT_DIR
+        #defaults[SETTINGS]['client'] = self.get_client(
+        #        collaborator_name,
+        #        self.aggregator_uuid,
+        #        self.federation_uuid,
+        #        str(CERT_DIR) + '/cert_chain.crt',
+        #        str(CERT_DIR) + '/client/col_secret.crt',
+        #        str(CERT_DIR) + '/client/col_secret.key',
+        #)
 
-        if self.secret_collaborator_ is None:
-            self.secret_collaborator_ = Plan.build(**defaults)
+        self.secret_collaborator_ = Plan.build(**defaults)
         return self.secret_collaborator_
 
 
