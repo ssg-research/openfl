@@ -127,3 +127,48 @@ class PyTorchDataLoader(DataLoader):
 
         # build the generator and return it
         return self._batch_generator(X, y, idxs, batch_size, num_batches)
+
+
+    def get_watermark_validation_loader(self):
+        """get watermark loader"""
+        import torch, torchvision
+        import numpy as np
+        from openfl.component.secret_collaborator import Pattern
+        from openfl.federated.data import FederatedDataSet
+        wm_transform = torchvision.transforms.Compose([
+            #torchvision.transforms.Grayscale(),
+            #torchvision.transforms.Resize(x_input),
+            #torchvision.transforms.CenterCrop(x_input),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(0.5, 0.5)
+        ])
+        watermark_data_path = './data/WATERMARK/'
+        watermark_set = Pattern(watermark_data_path, n_classes=10, transform=wm_transform)
+        watermark_images, watermark_labels = torch.stack(watermark_set.train_data).float(), np.array(watermark_set.train_labels)
+        y_valid_watermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
+        #watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_watermark,
+        #                                  batch_size=50,
+        #                                  num_classes=10)
+        return self._get_batch_generator(X=watermark_images, y=y_valid_watermark, batch_size=100)
+
+    def get_watermark_train_loader(self):
+        """get watermark loader"""
+        import torch, torchvision
+        import numpy as np
+        from openfl.component.secret_collaborator import Pattern
+        from openfl.federated.data import FederatedDataSet
+        wm_transform = torchvision.transforms.Compose([
+            #torchvision.transforms.Grayscale(),
+            #torchvision.transforms.Resize(x_input),
+            #torchvision.transforms.CenterCrop(x_input),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(0.5, 0.5)
+        ])
+        watermark_data_path = './data/WATERMARK/'
+        watermark_set = Pattern(watermark_data_path, n_classes=10, transform=wm_transform)
+        watermark_images, watermark_labels = torch.stack(watermark_set.train_data).float(), np.array(watermark_set.train_labels)
+        y_valid_watermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
+        #watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_watermark,
+        #                                  batch_size=50,
+        #                                  num_classes=10)
+        return self._get_batch_generator(X=watermark_images, y=watermark_labels, batch_size=50)
