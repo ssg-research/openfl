@@ -13,6 +13,7 @@ from openfl.pipelines import NoCompressionPipeline
 from openfl.pipelines import TensorCodec
 from openfl.protocols import utils
 from openfl.utilities import TensorKey
+from openfl.component import Collaborator
 
 import torchvision
 import torch
@@ -29,6 +30,10 @@ from param.parameterized import ParamOverrides
 from contextlib import contextmanager
 from holoviews import HoloMap, Image, Dimension
 from holoviews.core import BoundingBox, BoundingRegionParameter, SheetCoordinateSystem
+
+from openfl.federated.task import FederatedModel
+from openfl.federated.data import FederatedDataSet
+import torch.optim as optim
 
 class DevicePolicy(Enum):
     """Device assignment policy."""
@@ -57,7 +62,6 @@ class OptTreatment(Enum):
     averaged optimizer state from the previous round.
     '''
 
-
 class Pattern(torch.utils.data.Dataset):
     # This is used to load images from the defined pattern image file
 
@@ -81,38 +85,42 @@ class Pattern(torch.utils.data.Dataset):
         self.transform = transform
         self.n_classes = n_classes
 
-        self.data = []
-        self.labels = []
+        self.train_data = []
+        self.train_labels = []
         for i in range(0, self.n_classes):
             dirs = os.path.join(self.root_dir, '%d' % i)
             for idx, fimg in enumerate(glob.glob(os.path.join(dirs, '*.png'))):
                 if idx < 10:
                     image = Img.open(fimg)
-                    image = np.array(self.transform(image.convert('RGB')))
-                    self.data.append(image)
-                    self.labels.append(i)
+                    #image = image.convert('RGB')
+                    image = self.transform(image)
+                    #image = np.array(self.transform(image.convert('RGB')))
+                    # below is true just for mnist
+                    image = (image*255)*0.5 + (255*0.5)
+                    self.train_data.append(image)
+                    self.train_labels.append(i)
 
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, idx: int) -> (torch.Tensor, int):
         image = self.data[idx]
-        image = self.transform(image)
+        #image = self.transform(image)
         label = self.labels[idx]
         return image, label
 
-    @property
-    def train_data(self):
-        warnings.warn("train_data has been renamed data")
-        return torch.tensor(self.data)
+    #@property
+    #def train_data(self):
+    #    warnings.warn("train_data has been renamed data")
+    #    return torch.tensor(self.data)
 
-    @property
-    def train_labels(self):
-        warnings.warn("train_labels has been renamed targets")
-        return self.labels
+    #@property
+    #def train_labels(self):
+    #    warnings.warn("train_labels has been renamed targets")
+    #    return self.labels
 
 
-class Secret_Collaborator:
+class Secret_Collaborator(Collaborator):
     r"""The Collaborator object class.
 
     Args:
@@ -143,16 +151,16 @@ class Secret_Collaborator:
                  aggregator_uuid,
                  federation_uuid,
                  client,
-                 runner,
+                 task_runner,
                  task_config,
                  opt_treatment='RESET',
                  device_assignment_policy='CPU_ONLY',
                  delta_updates=False,
                  compression_pipeline=None,
                  db_store_rounds=1,
-                 watermark_number=100,
-                 learning_rate=0.0005,
-                 watermark_batch_size=32,
+                 watermark_number=10,
+                 learning_rate=0.001,
+                 watermark_batch_size=50,
                  **kwargs):
         """Initialize."""
         self.single_col_cert_common_name = None
@@ -170,7 +178,7 @@ class Secret_Collaborator:
         self.tensor_db = TensorDB()
         self.db_store_rounds = db_store_rounds
 
-        self.task_runner = None
+        self.task_runner = task_runner
         self.delta_updates = delta_updates
 
         self.client = client
@@ -179,12 +187,12 @@ class Secret_Collaborator:
 
         self.logger = getLogger(__name__)
 
-        self.watermark_class = runner.data_loader.num_classes
+        self.watermark_class = task_runner.data_loader.num_classes
         self.watermark_number = watermark_number
         self.learning_rate = learning_rate
         self.watermark_batch_size = watermark_batch_size
 
-        self.set_task_runner(runner)
+        self.set_task_runner(task_runner)
 
         # RESET/CONTINUE_LOCAL/CONTINUE_GLOBAL
         if hasattr(OptTreatment, opt_treatment):
@@ -205,31 +213,28 @@ class Secret_Collaborator:
         self.task_runner.set_optimizer_treatment(self.opt_treatment.name)
 
     def set_task_runner(self, runner):
-        from openfl.federated import FederatedModel, FederatedDataSet
-
-        import torchvision
-        import torch.optim as optim
 
         x_input = runner.feature_shape[-2]
         y_input = runner.feature_shape[-1]
 
         wm_transform = torchvision.transforms.Compose([
             torchvision.transforms.Grayscale(),
-            torchvision.transforms.Resize(x_input),
-            torchvision.transforms.CenterCrop(x_input),
+            #torchvision.transforms.Resize(x_input),
+            #torchvision.transforms.CenterCrop(x_input),
             torchvision.transforms.ToTensor(),
             torchvision.transforms.Normalize(0.5, 0.5)
         ])
         watermark_data_path = './data/WATERMARK/'
         self.generate_mpattern(x_input=x_input, y_input=y_input, num_class=self.watermark_class, num_picures=self.watermark_number, watermark_data_path=watermark_data_path)
         watermark_set = Pattern(watermark_data_path, n_classes=self.watermark_class, transform=wm_transform)
-        watermark_images, watermark_labels = watermark_set.train_data, np.array(watermark_set.train_labels)
-        y_valid_wartermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
-        watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_wartermark,
+        watermark_images, watermark_labels = torch.stack(watermark_set.train_data), np.array(watermark_set.train_labels)
+        y_valid_watermark = torch.nn.functional.one_hot(torch.tensor(watermark_labels)).numpy()
+        watermark_data = FederatedDataSet(watermark_images, watermark_labels, watermark_images, y_valid_watermark,
                                           batch_size=self.watermark_batch_size,
                                           num_classes=self.watermark_class)
 
-        optimizer_watermark = lambda x: optim.Adam(x, lr=self.learning_rate)
+        #optimizer_watermark = lambda x: optim.Adam(x, lr=self.learning_rate)
+        optimizer_watermark = lambda x: optim.SGD(x, lr=self.learning_rate, momentum=0.5, weight_decay=0.00005)
 
         watermark_model = FederatedModel(build_model=runner.build_model,
                                          optimizer=optimizer_watermark, loss_fn=self.cross_entropy,
@@ -341,7 +346,7 @@ class Secret_Collaborator:
         self.logger.info('Waiting for tasks...')
 
 ##########################################################
-        if self.collaborator_name=='secret_collaborator':
+        if self.collaborator_name=='secret':
             tasks, round_number, sleep_time, time_to_quit = self.client.get_tasks(
                 self.client.authorized_cols[0])
         else:
@@ -406,13 +411,12 @@ class Secret_Collaborator:
             # Tasks are defined as methods of TaskRunner
             func = getattr(self.task_runner, func_name)
             self.logger.info('Using TaskRunner subclassing API')
-
         if 'train' in func_name:
             global_output_tensor_dict, local_output_tensor_dict = func(
                 col_name=self.collaborator_name,
                 round_num=round_number-1,
                 input_tensor_dict=input_tensor_dict,
-                # epochs=10,
+                #epochs=100,
                 **kwargs)
         else:
             global_output_tensor_dict, local_output_tensor_dict = func(

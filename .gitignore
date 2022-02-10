@@ -11,3 +11,5 @@ venv/*
 *.jpg
 *.crt
 *.key
+
+.DS_Store

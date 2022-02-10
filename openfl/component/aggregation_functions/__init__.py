@@ -7,5 +7,6 @@ from .geometric_median import GeometricMedian
 from .interface import AggregationFunction
 from .median import Median
 from .weighted_average import WeightedAverage
+from .replace import Replace
 
-__all__ = ['Median', 'WeightedAverage', 'GeometricMedian', 'AggregationFunction']
+__all__ = ['Median', 'WeightedAverage', 'GeometricMedian', 'AggregationFunction', 'Replace']

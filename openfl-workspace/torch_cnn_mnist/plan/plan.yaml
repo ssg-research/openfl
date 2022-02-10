@@ -28,9 +28,10 @@ secret_collaborator :
     delta_updates    : false
     opt_treatment    : RESET
     watermark        : false
-    watermark_number : 100
-    learning_rate    : 0.0005
-    watermark_batch_size: 32
+    watermark_number : 10
+    learning_rate    : 0.001
+    watermark_batch_size: 50
+    weight_decay: 0.00005
 
 data_loader :
   defaults : plan/defaults/data_loader.yaml
